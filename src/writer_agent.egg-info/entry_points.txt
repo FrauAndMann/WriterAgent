@@ -1,0 +1,2 @@
+[console_scripts]
+writer-agent = writer_agent.cli:app
