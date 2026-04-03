@@ -219,7 +219,12 @@ def brainstorm(title: str):
 
 
 @app.command()
-def write(title: str):
+def write(
+    title: str,
+    outline: str = typer.Option("", "--outline", "-o", help="Chapter outline/plan"),
+    target_words: int = typer.Option(3000, "--words", "-w", help="Target word count"),
+    temperature: float = typer.Option(0.85, "--temp", "-t", help="Generation temperature"),
+):
     """Generate the next chapter."""
     db = _get_db()
     from writer_agent.settings import Settings
@@ -242,11 +247,18 @@ def write(title: str):
     ctx = ContextBuilder(db, settings=config)
     gen = ChapterGenerator(db=db, llm_client=llm, context_builder=ctx)
 
-    console.print(f"\n[bold]Writing chapter {next_ch}[/bold] for {title}...")
+    if outline:
+        console.print(f"\n[bold]Writing chapter {next_ch}[/bold] for {title}...")
+        console.print(f"[dim]Outline: {outline}[/dim]")
+    else:
+        console.print(f"\n[bold]Writing chapter {next_ch}[/bold] for {title}...")
 
     result = gen.generate_chapter(
         project_id=pid,
         chapter_number=next_ch,
+        outline=outline,
+        target_words=target_words,
+        temperature=temperature,
     )
     console.print(f"[green]Done![/green] {result['word_count']} words written.")
 
