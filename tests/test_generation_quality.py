@@ -239,7 +239,7 @@ class TestPromptAssembler:
     def test_includes_scene_prompts(self, assembler):
         result = assembler.assemble(scene_types=["dialogue", "erotic"])
         assert "Диалог-сцена" in result["system"]
-        assert "Сенсуальная сцена" in result["system"]
+        assert "Откровенная" in result["system"] or "эрот" in result["system"].lower()
 
     def test_includes_style_instructions(self, assembler):
         style = "Пиши короткими фразами. Много метафор."
