@@ -1,19 +1,20 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from writer_agent.llm.client import LLMClient
-from writer_agent.config import Config
+from writer_agent.settings import Settings
 
 
 def test_client_uses_openai_compatible_api():
-    config = Config(lm_studio_url="http://localhost:1234/v1", model_name="test-model")
-    client = LLMClient(config)
+    settings = Settings()
+    settings.lmstudio.url = "http://localhost:1234/v1"
+    settings.lmstudio.model_name = "test-model"
+    client = LLMClient(settings)
     assert client.base_url == "http://localhost:1234/v1"
     assert client.model == "test-model"
 
 
 def test_generate_sends_correct_params(mocker):
-    config = Config()
-    client = LLMClient(config)
+    client = LLMClient(Settings())
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = "Generated text"
@@ -30,8 +31,7 @@ def test_generate_sends_correct_params(mocker):
 
 
 def test_generate_with_context_assembles_messages(mocker):
-    config = Config()
-    client = LLMClient(config)
+    client = LLMClient(Settings())
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = "Dark prose"
@@ -47,13 +47,13 @@ def test_generate_with_context_assembles_messages(mocker):
     assert result == "Dark prose"
     call_args = client._client.chat.completions.create.call_args
     messages = call_args.kwargs["messages"]
-    # context blocks should be injected between system and user messages
     assert len(messages) >= 3  # system + context + user
 
 
 def test_auto_detect_model(mocker):
-    config = Config(model_name="")
-    client = LLMClient(config)
+    settings = Settings()
+    settings.lmstudio.model_name = ""
+    client = LLMClient(settings)
     mock_models = MagicMock()
     mock_models.data = [MagicMock(id="local-model-q4_k_m")]
     mocker.patch.object(client, "_client")

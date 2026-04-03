@@ -15,11 +15,11 @@ console = Console()
 
 
 def _get_db(path: Path | None = None):
-    from writer_agent.config import Config
+    from writer_agent.settings import Settings
     from writer_agent.db.database import Database
 
-    config = Config.from_env()
-    db_path = path or config.db_path
+    settings = Settings.load()
+    db_path = path or settings.db_path
     db = Database(db_path)
     db.initialize()
     return db
@@ -118,12 +118,13 @@ def status(title: str):
 def brainstorm(title: str):
     """Enter brainstorm mode for a project."""
     db = _get_db()
-    from writer_agent.config import Config
+    from writer_agent.settings import Settings
     from writer_agent.llm.client import LLMClient
     from writer_agent.engine.brainstorm import BrainstormEngine
 
-    config = Config.from_env()
+    config = Settings.load()
     llm = LLMClient(config)
+
     engine = BrainstormEngine(db=db, llm_client=llm)
 
     # Find or create project
@@ -221,13 +222,13 @@ def brainstorm(title: str):
 def write(title: str):
     """Generate the next chapter."""
     db = _get_db()
-    from writer_agent.config import Config
+    from writer_agent.settings import Settings
     from writer_agent.llm.client import LLMClient
     from writer_agent.engine.context import ContextBuilder
     from writer_agent.engine.generator import ChapterGenerator
     from writer_agent.db.repositories import ProjectRepo, ChapterRepo
 
-    config = Config.from_env()
+    config = Settings.load()
     llm = LLMClient(config)
     project = ProjectRepo(db).get_by_name(title)
     if not project:
@@ -238,7 +239,7 @@ def write(title: str):
     latest = ChapterRepo(db).get_latest(pid)
     next_ch = (latest["chapter_number"] + 1) if latest else 1
 
-    ctx = ContextBuilder(db, max_tokens=config.max_context_tokens)
+    ctx = ContextBuilder(db, settings=config)
     gen = ChapterGenerator(db=db, llm_client=llm, context_builder=ctx)
 
     console.print(f"\n[bold]Writing chapter {next_ch}[/bold] for {title}...")
@@ -257,13 +258,13 @@ def write(title: str):
 def revise(title: str, chapter: int, instructions: str = ""):
     """Revise a chapter."""
     db = _get_db()
-    from writer_agent.config import Config
+    from writer_agent.settings import Settings
     from writer_agent.llm.client import LLMClient
     from writer_agent.engine.context import ContextBuilder
     from writer_agent.engine.generator import ChapterGenerator
     from writer_agent.db.repositories import ProjectRepo, ChapterRepo
 
-    config = Config.from_env()
+    config = Settings.load()
     llm = LLMClient(config)
     project = ProjectRepo(db).get_by_name(title)
     if not project:
@@ -278,7 +279,7 @@ def revise(title: str, chapter: int, instructions: str = ""):
     if not instructions:
         instructions = typer.prompt("Revision instructions")
 
-    ctx = ContextBuilder(db, max_tokens=config.max_context_tokens)
+    ctx = ContextBuilder(db, settings=config)
     gen = ChapterGenerator(db=db, llm_client=llm, context_builder=ctx)
     result = gen.revise_chapter(ch["id"], instructions)
     console.print(f"[green]Chapter {chapter} revised.[/green]")
@@ -349,13 +350,13 @@ def export(title: str, fmt: str = "md"):
         console.print("[red]No chapters to export.[/red]")
         raise typer.Exit(1)
 
-    from writer_agent.config import Config
+    from writer_agent.settings import Settings
 
     config = Config.from_env()
-    config.output_dir.mkdir(parents=True, exist_ok=True)
+    config.output_dir_path.mkdir(parents=True, exist_ok=True)
 
     ext = {"md": ".md", "txt": ".txt", "docx": ".docx"}.get(fmt, ".md")
-    output_path = config.output_dir / f"{title}{ext}"
+    output_path = config.output_dir_path / f"{title}{ext}"
 
     exporter = Exporter(ChapterRepo(db))
     if fmt == "txt":
@@ -366,3 +367,101 @@ def export(title: str, fmt: str = "md"):
         exporter.to_markdown(pid, output_path, title=title)
 
     console.print(f"[green]Exported to:[/green] {output_path}")
+
+
+# ── config ───────────────────────────────────────────────────────────────────
+
+
+config_app = typer.Typer(
+    name="config",
+    help="Manage settings (set, get, list, show, reset)",
+    no_args_is_help=True,
+)
+app.add_typer(config_app, name="config")
+
+
+def _load_settings():
+    from writer_agent.settings import Settings
+    return Settings.load()
+
+
+@config_app.command("set")
+def config_set(key: str, value: str, scope: str = typer.Option("local", "--scope", "-s", help="global or local")):
+    """Set a configuration value. Example: writer-agent config set generation.temperature 0.9"""
+    settings = _load_settings()
+    try:
+        settings.set_value(key, value, scope=scope)
+        settings.save(scope=scope)
+        val, src = settings.get_value(key)
+        console.print(f"[green]Set[/green] {key} = {val} (scope: {scope})")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
+@config_app.command("get")
+def config_get(key: str):
+    """Get a configuration value with its source."""
+    settings = _load_settings()
+    try:
+        value, source = settings.get_value(key)
+        source_style = {"default": "dim", "global": "blue", "local": "green", "env": "yellow", "api": "magenta"}.get(source, "white")
+        console.print(f"{key} = {value}  [{source_style}]{source}[/]")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+
+@config_app.command("list")
+def config_list(scope: str = typer.Option("", "--scope", "-s", help="Filter by source: global, local, env, api")):
+    """List all configuration values with sources."""
+    settings = _load_settings()
+    rows = settings.all_keys()
+
+    table = Table(title="WriterAgent Settings")
+    table.add_column("Key", style="cyan")
+    table.add_column("Value", style="white")
+    table.add_column("Source", style="green")
+
+    for section, key, value, source in rows:
+        if scope and source != scope:
+            continue
+        source_style = {"default": "dim", "global": "blue", "local": "green", "env": "yellow", "api": "magenta"}.get(source, "white")
+        display_val = str(value) if value != 0 or key.endswith("_tokens") else "—"
+        table.add_row(f"{section}.{key}", display_val, f"[{source_style}]{source}[/]")
+
+    console.print(table)
+
+
+@config_app.command("show")
+def config_show():
+    """Pretty-print all settings grouped by section with source colors."""
+    settings = _load_settings()
+    rows = settings.all_keys()
+
+    source_legend = "[dim](df)[/dim]efault  [blue](glb)[/blue]al  [green](loc)[/green]al  [yellow](env)[/yellow]  [magenta](api)[/magenta]"
+
+    current_section = None
+    for section, key, value, source in rows:
+        if section != current_section:
+            console.print(f"\n[bold][{section}][/bold]")
+            current_section = section
+        source_tag = {"default": "dim", "global": "blue", "local": "green", "env": "yellow", "api": "magenta"}.get(source, "white")
+        console.print(f"  {key:30s} {str(value):20s} [{source_tag}]({source[:3]})[/{source_tag}]")
+
+    console.print(f"\nSources: {source_legend}")
+
+
+@config_app.command("reset")
+def config_reset(key: str, scope: str = typer.Option("local", "--scope", "-s")):
+    """Reset a setting to its default (remove from TOML file)."""
+    settings = _load_settings()
+    try:
+        settings.unset_key(key, scope=scope)
+        # Reload to show the reverted value
+        settings = _load_settings()
+        value, source = settings.get_value(key)
+        console.print(f"[green]Reset[/green] {key} → {value} (now from: {source})")
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)

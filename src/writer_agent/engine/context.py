@@ -6,15 +6,25 @@ from writer_agent.db.repositories import (
 
 
 class ContextBuilder:
-    def __init__(self, db: Database, max_tokens: int = 6000):
+    def __init__(self, db: Database, max_tokens: int | None = None, settings=None):
         self.db = db
-        self.max_tokens = max_tokens
         self.projects = ProjectRepo(db)
         self.characters = CharacterRepo(db)
         self.chapters = ChapterRepo(db)
         self.plots = PlotThreadRepo(db)
         self.world = WorldElementRepo(db)
         self.relationships = RelationshipRepo(db)
+
+        if settings:
+            self.max_tokens = max_tokens or settings.context.budget_tokens
+            self._history_chapters = settings.context.history_chapters
+            self._multi_chapter_threshold = settings.context.multi_chapter_threshold
+            self._passage_tail_chars = settings.context.passage_tail_chars
+        else:
+            self.max_tokens = max_tokens or 6000
+            self._history_chapters = 5
+            self._multi_chapter_threshold = 5
+            self._passage_tail_chars = 2000
 
     def build(self, project_id: int, current_chapter: int) -> dict:
         blocks = []
@@ -34,10 +44,10 @@ class ContextBuilder:
 
         # Priority 3: Chapter history — multi-chapter compression when deep into the novel
         prev_chapter = self.chapters.get_by_number(project_id, current_chapter - 1)
-        if current_chapter > 5:
-            # Include compressed summaries of the last 5 chapters
+        if current_chapter > self._multi_chapter_threshold:
             history_lines = []
-            for ch_num in range(max(1, current_chapter - 5), current_chapter):
+            start = max(1, current_chapter - self._history_chapters)
+            for ch_num in range(start, current_chapter):
                 ch = self.chapters.get_by_number(project_id, ch_num)
                 if ch:
                     history_lines.append(
@@ -69,7 +79,7 @@ class ContextBuilder:
         # Priority 6: Last passage from previous chapter
         if prev_chapter and prev_chapter.get("full_text"):
             text = prev_chapter["full_text"]
-            passage = text[-1500:] if len(text) > 1500 else text
+            passage = text[-self._passage_tail_chars:] if len(text) > self._passage_tail_chars else text
             blocks.append(("prev_passage", f"[Конец предыдущей главы]\n{passage}"))
 
         # Priority 7: Relationships

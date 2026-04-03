@@ -1,12 +1,18 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from openai import OpenAI
-from writer_agent.config import Config
+
+if TYPE_CHECKING:
+    from writer_agent.settings import Settings
 
 
 class LLMClient:
-    def __init__(self, config: Config):
-        self.config = config
-        self.base_url = config.lm_studio_url
-        self.model = config.model_name
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.base_url = settings.lmstudio.url
+        self.model = settings.lmstudio.model_name
         self._client = OpenAI(base_url=self.base_url, api_key="lm-studio")
 
     def get_available_model(self) -> str:
@@ -35,24 +41,42 @@ class LLMClient:
 
         messages.append({"role": "user", "content": user_prompt})
 
-        response = self._client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature or self.config.temperature,
-            top_p=self.config.top_p,
-        )
+        gen = self.settings.generation
+        effective_max = gen.max_output_tokens if gen.max_output_tokens > 0 else max_tokens
+
+        kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": effective_max,
+            "temperature": temperature or gen.temperature,
+            "top_p": gen.top_p,
+        }
+        if gen.top_k > 0:
+            kwargs["top_k"] = gen.top_k
+        if gen.min_p > 0:
+            kwargs["min_p"] = gen.min_p
+        if gen.repetition_penalty != 1.0:
+            kwargs["repetition_penalty"] = gen.repetition_penalty
+        if gen.frequency_penalty != 0.0:
+            kwargs["frequency_penalty"] = gen.frequency_penalty
+        if gen.presence_penalty != 0.0:
+            kwargs["presence_penalty"] = gen.presence_penalty
+        if gen.seed >= 0:
+            kwargs["seed"] = gen.seed
+
+        response = self._client.chat.completions.create(**kwargs)
         return response.choices[0].message.content
 
     def chat(self, messages: list[dict], max_tokens: int = 4000) -> str:
         """Direct multi-turn chat for brainstorm mode."""
         model = self.get_available_model()
+        gen = self.settings.generation
         response = self._client.chat.completions.create(
             model=model,
             messages=messages,
-            max_tokens=max_tokens,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
+            max_tokens=gen.max_output_tokens if gen.max_output_tokens > 0 else max_tokens,
+            temperature=gen.temperature,
+            top_p=gen.top_p,
         )
         return response.choices[0].message.content
 
