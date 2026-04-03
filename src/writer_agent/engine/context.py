@@ -1,7 +1,9 @@
+import json
+
 from writer_agent.db.database import Database
 from writer_agent.db.repositories import (
     ProjectRepo, CharacterRepo, ChapterRepo,
-    PlotThreadRepo, WorldElementRepo, RelationshipRepo,
+    PlotThreadRepo, WorldElementRepo, RelationshipRepo, PlotStateRepo,
 )
 
 
@@ -14,6 +16,7 @@ class ContextBuilder:
         self.plots = PlotThreadRepo(db)
         self.world = WorldElementRepo(db)
         self.relationships = RelationshipRepo(db)
+        self.plot_states = PlotStateRepo(db)
 
         if settings:
             self.max_tokens = max_tokens or settings.context.budget_tokens
@@ -42,23 +45,46 @@ class ContextBuilder:
         )
         blocks.append(("characters", char_block))
 
-        # Priority 3: Chapter history — multi-chapter compression when deep into the novel
-        prev_chapter = self.chapters.get_by_number(project_id, current_chapter - 1)
-        if current_chapter > self._multi_chapter_threshold:
-            history_lines = []
-            start = max(1, current_chapter - self._history_chapters)
-            for ch_num in range(start, current_chapter):
-                ch = self.chapters.get_by_number(project_id, ch_num)
-                if ch:
-                    history_lines.append(
-                        f"  Гл.{ch['chapter_number']}: {ch.get('summary', '')}"
-                    )
-            if history_lines:
-                history_block = "[История последних глав]\n" + "\n".join(history_lines)
-                blocks.append(("chapter_history", history_block))
-        elif prev_chapter:
-            summary_block = f"[Предыдущая глава ({prev_chapter['chapter_number']}: {prev_chapter.get('title', '')})]\n{prev_chapter['summary']}"
-            blocks.append(("prev_summary", summary_block))
+        # Priority 2.5: Plot state (structured plot tracking)
+        latest_state = self.plot_states.get_latest(project_id)
+        if latest_state:
+            state = json.loads(latest_state["state"])
+            state_block = self._format_plot_state(state)
+            if state_block:
+                blocks.append(("plot_state", state_block))
+
+        # Priority 3: Chapter history — hierarchical summaries
+        all_chapters = self.chapters.list_by_project(project_id)
+        prev_chapters = [ch for ch in all_chapters if ch["chapter_number"] < current_chapter]
+
+        if prev_chapters:
+            # Arc summaries: ALL chapters (~20 words each)
+            arc_lines = []
+            for ch in prev_chapters:
+                arc = ch.get("arc_summary", "") or ""
+                if arc:
+                    arc_lines.append(f"  Гл.{ch['chapter_number']}: {arc}")
+            if arc_lines:
+                arc_block = "[Арка романа — все главы]\n" + "\n".join(arc_lines)
+                blocks.append(("arc_summaries", arc_block))
+
+            # Compact summaries: last N chapters (~50 words each)
+            recent = prev_chapters[-self._history_chapters:]
+            compact_lines = []
+            for ch in recent:
+                compact = ch.get("compact_summary", "") or ""
+                if compact:
+                    compact_lines.append(f"  Гл.{ch['chapter_number']}: {compact}")
+            if compact_lines:
+                compact_block = "[Последние главы — суть]\n" + "\n".join(compact_lines)
+                blocks.append(("compact_summaries", compact_block))
+
+            # Detail summary: previous chapter only (~300 words)
+            prev_ch = prev_chapters[-1]
+            detail = prev_ch.get("summary", "") or ""
+            if detail:
+                detail_block = f"[Предыдущая глава ({prev_ch['chapter_number']}: {prev_ch.get('title', '')})]\n{detail}"
+                blocks.append(("prev_detail", detail_block))
 
         # Priority 4: Plot threads
         threads = self.plots.list_by_project(project_id, status="active")
@@ -77,10 +103,12 @@ class ContextBuilder:
             blocks.append(("world", world_block))
 
         # Priority 6: Last passage from previous chapter
-        if prev_chapter and prev_chapter.get("full_text"):
-            text = prev_chapter["full_text"]
-            passage = text[-self._passage_tail_chars:] if len(text) > self._passage_tail_chars else text
-            blocks.append(("prev_passage", f"[Конец предыдущей главы]\n{passage}"))
+        if prev_chapters:
+            prev_ch = prev_chapters[-1]
+            if prev_ch.get("full_text"):
+                text = prev_ch["full_text"]
+                passage = text[-self._passage_tail_chars:] if len(text) > self._passage_tail_chars else text
+                blocks.append(("prev_passage", f"[Конец предыдущей главы]\n{passage}"))
 
         # Priority 7: Relationships
         rels = self.relationships.list_by_project(project_id)
@@ -92,6 +120,52 @@ class ContextBuilder:
             blocks.append(("relationships", rel_block))
 
         return self._fit_budget(blocks, self.max_tokens)
+
+    def _format_plot_state(self, state: dict) -> str:
+        """Format plot state into a readable context block."""
+        lines = ["[Состояние сюжета]"]
+
+        conflicts = state.get("conflicts", [])
+        if conflicts:
+            lines.append("Конфликты:")
+            for c in conflicts[:5]:
+                lines.append(f"  - {c.get('name', '?')} ({c.get('parties', '')}): "
+                             f"инт. {c.get('intensity', '?')}, {c.get('status', '')}")
+
+        arcs = state.get("character_arcs", [])
+        if arcs:
+            lines.append("Арки персонажей:")
+            for a in arcs[:5]:
+                lines.append(f"  - {a.get('character', '?')}: {a.get('current_state', '')} "
+                             f"({a.get('trajectory', '')})")
+
+        relationships = state.get("relationships", [])
+        if relationships:
+            lines.append("Отношения:")
+            for r in relationships[:5]:
+                lines.append(f"  - {r.get('pair', '?')}: {r.get('type', '')}, "
+                             f"инт. {r.get('intensity', '?')}, {r.get('direction', '')}")
+
+        mysteries = state.get("mysteries", [])
+        if mysteries:
+            lines.append("Загадки:")
+            for m in mysteries[:3]:
+                lines.append(f"  - {m.get('name', '?')}: подсказок {m.get('clues_given', 0)}")
+
+        tone = state.get("tone", "")
+        if tone:
+            lines.append(f"Тон арки: {tone}")
+
+        hooks = state.get("hooks", [])
+        if hooks:
+            lines.append("Крючки:")
+            for h in hooks[:3]:
+                lines.append(f"  - {h.get('description', '?')} (гл.{h.get('planted_chapter', '?')})")
+
+        # Only return if there's real content beyond the header
+        if len(lines) <= 1:
+            return ""
+        return "\n".join(lines)
 
     def _fit_budget(self, blocks: list, budget: int) -> dict:
         result_blocks = []

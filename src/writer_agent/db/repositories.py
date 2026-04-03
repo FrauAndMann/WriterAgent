@@ -98,12 +98,14 @@ class ChapterRepo:
         self.db = db
 
     def create(self, project_id: int, chapter_number: int, title: str = "",
-               summary: str = "", full_text: str = "") -> int:
+               summary: str = "", full_text: str = "",
+               compact_summary: str = "", arc_summary: str = "") -> int:
         word_count = len(full_text.split()) if full_text else 0
         cur = self.db.execute(
-            "INSERT INTO chapters (project_id, chapter_number, title, summary, full_text, word_count) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (project_id, chapter_number, title, summary, full_text, word_count),
+            "INSERT INTO chapters "
+            "(project_id, chapter_number, title, summary, compact_summary, arc_summary, full_text, word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, chapter_number, title, summary, compact_summary, arc_summary, full_text, word_count),
         )
         self.db.connection.commit()
         return cur.lastrowid
@@ -137,6 +139,15 @@ class ChapterRepo:
         self.db.execute(
             "UPDATE chapters SET full_text = ?, word_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (full_text, word_count, chapter_id),
+        )
+        self.db.connection.commit()
+
+    def update_summaries(self, chapter_id: int, summary: str = "",
+                         compact_summary: str = "", arc_summary: str = ""):
+        self.db.execute(
+            "UPDATE chapters SET summary = ?, compact_summary = ?, arc_summary = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (summary, compact_summary, arc_summary, chapter_id),
         )
         self.db.connection.commit()
 
@@ -316,6 +327,40 @@ class TimelineEventRepo:
     def get_by_project(self, project_id: int) -> list[dict]:
         rows = self.db.execute(
             "SELECT * FROM timeline_events WHERE project_id = ? ORDER BY event_order",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+
+class PlotStateRepo:
+    def __init__(self, db: Database):
+        self.db = db
+
+    def create(self, project_id: int, chapter_number: int, state: dict) -> int:
+        cur = self.db.execute(
+            "INSERT INTO plot_states (project_id, chapter_number, state) VALUES (?, ?, ?)",
+            (project_id, chapter_number, json.dumps(state, ensure_ascii=False)),
+        )
+        self.db.connection.commit()
+        return cur.lastrowid
+
+    def get_latest(self, project_id: int) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM plot_states WHERE project_id = ? ORDER BY chapter_number DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def get_by_chapter(self, project_id: int, chapter_number: int) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM plot_states WHERE project_id = ? AND chapter_number = ?",
+            (project_id, chapter_number),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def list_by_project(self, project_id: int) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM plot_states WHERE project_id = ? ORDER BY chapter_number",
             (project_id,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]

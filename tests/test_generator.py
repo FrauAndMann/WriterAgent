@@ -61,7 +61,7 @@ def test_generate_with_style_profile(setup):
 def test_generate_summary_with_llm(setup):
     gen, db, proj_id, llm = setup
     llm.generate.return_value = "Елена встречает Данте в клубе. Возникает напряжение."
-    summary = gen._generate_summary_llm("Длинный текст главы на тысячи слов...")
+    summary = gen._call_summary_llm("Длинный текст главы на тысячи слов...", "detail")
     assert "Елена" in summary
 
 
@@ -69,8 +69,10 @@ def test_generate_summary_fallback_on_llm_error(setup):
     gen, db, proj_id, llm = setup
     llm.generate.side_effect = Exception("LLM unavailable")
     text = "Короткий текст для fallback теста."
-    summary = gen._generate_summary(text)
-    assert len(summary) > 0  # should not crash
+    summaries = gen._generate_hierarchical_summaries(text)
+    assert len(summaries["detail"]) > 0  # should not crash
+    assert "compact" in summaries
+    assert "arc" in summaries
 
 
 def test_style_profile_auto_loaded_from_db(setup):

@@ -72,11 +72,22 @@ CREATE TABLE IF NOT EXISTS chapters (
     chapter_number INTEGER NOT NULL,
     title TEXT DEFAULT '',
     summary TEXT DEFAULT '',
+    compact_summary TEXT DEFAULT '',
+    arc_summary TEXT DEFAULT '',
     full_text TEXT DEFAULT '',
     word_count INTEGER DEFAULT 0,
     status TEXT DEFAULT 'draft',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
+CREATE TABLE IF NOT EXISTS plot_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    chapter_number INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
@@ -120,7 +131,22 @@ CREATE INDEX IF NOT EXISTS idx_world_project ON world_elements(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON brainstorm_sessions(project_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_project ON timeline_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_chapter ON timeline_events(chapter_id);
+CREATE INDEX IF NOT EXISTS idx_plot_states_project ON plot_states(project_id);
 """
+
+# Migration statements for existing databases
+MIGRATIONS = [
+    "ALTER TABLE chapters ADD COLUMN compact_summary TEXT DEFAULT ''",
+    "ALTER TABLE chapters ADD COLUMN arc_summary TEXT DEFAULT ''",
+    """CREATE TABLE IF NOT EXISTS plot_states (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        chapter_number INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+    )""",
+]
 
 
 class Database:
@@ -132,6 +158,15 @@ class Database:
 
     def initialize(self):
         self._conn.executescript(SCHEMA)
+        self._conn.commit()
+
+    def migrate(self):
+        """Run migrations for existing databases."""
+        for sql in MIGRATIONS:
+            try:
+                self._conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # Column/table already exists
         self._conn.commit()
 
     def execute(self, sql: str, params=()):
