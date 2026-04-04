@@ -317,6 +317,112 @@ def show(title: str, chapter: int = typer.Option(None, "--chapter", "-c", help="
         ))
 
 
+# ── chat (interactive agent) ────────────────────────────────────────────────
+
+
+@app.command()
+def chat(
+    title: str,
+    temperature: float = typer.Option(0.85, "--temp", "-t", help="Agent temperature"),
+):
+    """Interactive agent mode — write your novel through conversation."""
+    db = _get_db()
+    from writer_agent.settings import Settings
+    from writer_agent.llm.client import LLMClient
+    from writer_agent.engine.agent import AgentEngine
+    from writer_agent.db.repositories import ProjectRepo
+
+    config = Settings.load()
+    llm = LLMClient(config)
+    project = ProjectRepo(db).get_by_name(title)
+    if not project:
+        console.print(f"[red]Project not found:[/red] {title}")
+        console.print(f"[dim]Create it first: writer-agent new \"{title}\"[/dim]")
+        raise typer.Exit(1)
+
+    # Apply temperature override
+    config.generation.temperature = temperature
+
+    engine = AgentEngine(db=db, llm_client=llm, project_id=project["id"])
+
+    console.print(f"\n[bold magenta]Agent-Writer[/bold magenta] — {title}")
+    console.print("[dim]Пиши что хочешь. /help — команды, /quit — выход[/dim]\n")
+
+    while True:
+        try:
+            user_input = console.input("[bold cyan]Ты>[/bold cyan] ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]Пока![/dim]")
+            break
+
+        if not user_input:
+            continue
+
+        # Slash commands
+        if user_input == "/quit":
+            console.print("[dim]Сессия завершена. Все данные сохранены в БД.[/dim]")
+            break
+        if user_input == "/help":
+            console.print(Panel(
+                "[bold]Команды:[/bold]\n"
+                "/help — эта справка\n"
+                "/status — статус проекта\n"
+                "/characters — список персонажей\n"
+                "/chapters — список глав\n"
+                "/quit — выход\n\n"
+                "[bold]Или пиши на естественном языке:[/bold]\n"
+                "«составь концепцию романа про вампиров»\n"
+                "«создай персонажа Елена — тёмная следователь»\n"
+                "«напиши первую главу»\n"
+                "«переработай главу 3 — больше напряжения»",
+                title="Help",
+            ))
+            continue
+        if user_input == "/status":
+            from writer_agent.db.repositories import ChapterRepo, CharacterRepo, PlotThreadRepo
+            pid = project["id"]
+            chapters = ChapterRepo(db).list_by_project(pid)
+            chars = CharacterRepo(db).list_by_project(pid)
+            threads = PlotThreadRepo(db).list_by_project(pid)
+            total_words = sum(ch.get("word_count", 0) for ch in chapters)
+            console.print(f"\n[bold]{title}[/bold]")
+            console.print(f"  Главы: {len(chapters)} | Слова: {total_words:,} | Персонажи: {len(chars)} | Сюжетные нити: {len(threads)}")
+            console.print()
+            continue
+        if user_input == "/characters":
+            from writer_agent.db.repositories import CharacterRepo
+            chars = CharacterRepo(db).list_by_project(project["id"])
+            if not chars:
+                console.print("[dim]Персонажей пока нет.[/dim]")
+            else:
+                for c in chars:
+                    console.print(f"  [bold]{c['name']}[/bold]: {c.get('description', '')} ({c.get('personality', '')})")
+            console.print()
+            continue
+        if user_input == "/chapters":
+            from writer_agent.db.repositories import ChapterRepo
+            chapters = ChapterRepo(db).list_by_project(project["id"])
+            if not chapters:
+                console.print("[dim]Глав пока нет.[/dim]")
+            else:
+                for ch in chapters:
+                    arc = ch.get("arc_summary", "") or ""
+                    console.print(f"  Гл.{ch['chapter_number']}: {ch.get('title', '')} — {ch.get('word_count', 0)} сл. {arc}")
+            console.print()
+            continue
+
+        # Send to agent
+        try:
+            response = engine.chat(user_input)
+            console.print(Panel(
+                response or "...",
+                title="[bold magenta]Agent[/bold magenta]",
+                border_style="magenta",
+            ))
+        except Exception as e:
+            console.print(f"[red]Ошибка:[/red] {e}")
+
+
 # ── revise ───────────────────────────────────────────────────────────────────
 
 

@@ -1,0 +1,149 @@
+"""Interactive Agent Engine — orchestrates tools via LLM conversation loop."""
+
+from __future__ import annotations
+
+import json
+import re
+
+from writer_agent.db.database import Database
+from writer_agent.engine.agent_tools import ToolDef, build_tool_registry
+from writer_agent.llm.prompts import build_system_agent
+
+
+class AgentEngine:
+    """Interactive agent that uses LLM + tools to help write novels."""
+
+    MAX_HISTORY = 20
+
+    def __init__(self, db: Database, llm_client, project_id: int):
+        self.db = db
+        self.llm = llm_client
+        self.project_id = project_id
+        self.tools = build_tool_registry()
+        self.history: list[dict] = []  # conversation messages
+
+    def chat(self, user_message: str) -> str:
+        """Process a user message through the agent loop.
+
+        Returns the final text response (with tool results already executed).
+        """
+        # Add user message to history
+        self.history.append({"role": "user", "content": user_message})
+
+        # Trim history
+        self._trim_history()
+
+        # Agent loop: send to LLM, parse tools, execute, repeat
+        max_iterations = 5  # prevent infinite loops
+        final_text = ""
+
+        for _ in range(max_iterations):
+            # Build messages for LLM
+            messages = self._build_messages()
+
+            # Call LLM
+            response = self.llm.chat(messages=messages, max_tokens=4000)
+            self.history.append({"role": "assistant", "content": response})
+            self._trim_history()
+
+            # Parse tool calls
+            tool_calls = self._parse_tool_calls(response)
+
+            if not tool_calls:
+                # No tools — just text response
+                # Strip any remaining tool-like markers from display text
+                final_text = self._clean_response(response)
+                break
+
+            # Execute tool calls
+            results_text = ""
+            for tc in tool_calls:
+                result = self._execute_tool(tc["name"], tc.get("args", {}))
+                result_str = json.dumps(result, ensure_ascii=False)
+                results_text += f"\n```result\n{result_str}\n```\n"
+
+            # Feed results back as user message
+            self.history.append({"role": "user", "content": results_text})
+
+            # Trim history if too long
+            self._trim_history()
+
+            # Continue loop — LLM will see results and respond
+            # But also build display text from the response
+            clean = self._clean_response(response)
+            if clean.strip():
+                final_text = clean + "\n"
+
+        else:
+            final_text = final_text or "Достигнут лимит итераций. Попробуй продолжить."
+
+        return final_text.strip()
+
+    def get_tools_prompt(self) -> str:
+        """Build the tools description for the system prompt."""
+        return "\n\n".join(t.to_prompt_text() for t in self.tools.values())
+
+    def _build_messages(self) -> list[dict]:
+        """Build the full message list for the LLM."""
+        system = build_system_agent(self.get_tools_prompt())
+        messages = [{"role": "system", "content": system}]
+        messages.extend(self.history)
+        return messages
+
+    def _parse_tool_calls(self, response: str) -> list[dict]:
+        """Extract tool call JSON blocks from LLM response."""
+        calls = []
+        # Match ```tool ... ``` blocks
+        pattern = r"```tool\s*\n(.*?)```"
+        matches = re.findall(pattern, response, re.DOTALL)
+        for match in matches:
+            try:
+                data = json.loads(match.strip())
+                if "name" in data:
+                    calls.append(data)
+            except json.JSONDecodeError:
+                # Try to fix common JSON issues
+                try:
+                    # Sometimes LLM adds extra text
+                    start = match.strip().find("{")
+                    end = match.strip().rfind("}") + 1
+                    if start >= 0 and end > start:
+                        data = json.loads(match.strip()[start:end])
+                        if "name" in data:
+                            calls.append(data)
+                except json.JSONDecodeError:
+                    pass
+        return calls
+
+    def _execute_tool(self, name: str, args: dict) -> dict:
+        """Execute a single tool by name."""
+        tool = self.tools.get(name)
+        if not tool:
+            return {"error": f"Unknown tool: {name}. Available: {list(self.tools.keys())}"}
+
+        try:
+            # Pass db and project_id to all tools
+            result = tool.fn(
+                db=self.db,
+                project_id=self.project_id,
+                llm_client=self.llm,
+                context_builder=None,  # TODO: pass if needed
+                **args,
+            )
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    def _clean_response(self, response: str) -> str:
+        """Remove tool-call and result blocks from response for display."""
+        # Remove ```tool ... ``` blocks
+        cleaned = re.sub(r"```tool\s*\n.*?```", "", response, flags=re.DOTALL)
+        # Remove ```result ... ``` blocks
+        cleaned = re.sub(r"```result\s*\n.*?```", "", cleaned, flags=re.DOTALL)
+        return cleaned.strip()
+
+    def _trim_history(self):
+        """Keep history within limits."""
+        if len(self.history) > self.MAX_HISTORY * 2:
+            # Keep first message (user) and last MAX_HISTORY messages
+            self.history = self.history[:1] + self.history[-(self.MAX_HISTORY * 2):]
