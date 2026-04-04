@@ -262,6 +262,60 @@ def write(
     )
     console.print(f"[green]Done![/green] {result['word_count']} words written.")
 
+    # Auto-save to file
+    from writer_agent.settings import Settings as _S
+    _cfg = _S.load()
+    output_dir = Path(_cfg.paths.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = title.replace(" ", "_").replace("/", "_")
+    out_file = output_dir / f"{safe_title}_ch{next_ch}.txt"
+    out_file.write_text(result["full_text"], encoding="utf-8")
+    console.print(f"[dim]Saved to: {out_file}[/dim]")
+
+
+# ── show ────────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def show(title: str, chapter: int = typer.Option(None, "--chapter", "-c", help="Chapter number (latest if omitted)")):
+    """Read a chapter in terminal or show all chapters list."""
+    db = _get_db()
+    from writer_agent.db.repositories import ProjectRepo, ChapterRepo
+
+    project = ProjectRepo(db).get_by_name(title)
+    if not project:
+        console.print(f"[red]Project not found:[/red] {title}")
+        raise typer.Exit(1)
+
+    pid = project["id"]
+    chapters = ChapterRepo(db).list_by_project(pid)
+    if not chapters:
+        console.print("[dim]No chapters yet.[/dim]")
+        return
+
+    if chapter is None:
+        # List all chapters
+        table = Table(title=f"{title} — Chapters")
+        table.add_column("#", style="cyan")
+        table.add_column("Title", style="white")
+        table.add_column("Words", style="green")
+        table.add_column("Arc", style="dim", max_width=50)
+        for ch in chapters:
+            arc = ch.get("arc_summary", "") or ""
+            table.add_row(str(ch["chapter_number"]), ch.get("title", ""), str(ch.get("word_count", 0)), arc)
+        console.print(table)
+        console.print("[dim]Use --chapter N to read a specific chapter[/dim]")
+    else:
+        ch = ChapterRepo(db).get_by_number(pid, chapter)
+        if not ch:
+            console.print(f"[red]Chapter {chapter} not found.[/red]")
+            raise typer.Exit(1)
+        console.print(Panel(
+            ch["full_text"],
+            title=f"[bold]{ch.get('title', f'Глава {chapter}')}[/bold]",
+            subtitle=f"{ch.get('word_count', 0)} words",
+        ))
+
 
 # ── revise ───────────────────────────────────────────────────────────────────
 
