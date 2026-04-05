@@ -8,6 +8,7 @@ import re
 from writer_agent.db.database import Database
 from writer_agent.db.repositories import AgentSessionRepo
 from writer_agent.engine.agent_tools import ToolDef, build_tool_registry
+from writer_agent.engine.intent_router import IntentRouter
 from writer_agent.engine.session_state import SessionState
 from writer_agent.llm.prompts import build_system_agent
 
@@ -22,6 +23,7 @@ class AgentEngine:
         self.llm = llm_client
         self.project_id = project_id
         self.tools = build_tool_registry()
+        self.router = IntentRouter(self.tools)
         self.session_repo = AgentSessionRepo(db)
         self.session_id: int | None = None
         self.history: list[dict] = []
@@ -56,6 +58,13 @@ class AgentEngine:
 
         # Add user message to history
         self._append_message("user", user_message)
+
+        # Fast path: try token-based routing before LLM call
+        fast_result = self._try_fast_route(user_message)
+        if fast_result is not None:
+            # running → waiting
+            self._transition(SessionState.WAITING)
+            return fast_result
 
         # Trim history
         self._trim_history()
@@ -142,6 +151,40 @@ class AgentEngine:
     def get_tools_prompt(self) -> str:
         """Build the tools description for the system prompt."""
         return "\n\n".join(t.to_prompt_text() for t in self.tools.values())
+
+    def _try_fast_route(self, user_message: str) -> str | None:
+        """Try to resolve the message via token-based routing (no LLM call).
+
+        Returns the formatted result string if a confident match is found,
+        or None if the message should go through the normal LLM loop.
+        """
+        match = self.router.best_match(user_message)
+        if match is None:
+            return None
+
+        # Only fast-route tools that take **no required params** or can
+        # operate with zero args (read-only info tools).  Tools that need
+        # user-supplied values (chapter_number, instructions, etc.) must go
+        # through the LLM so it can extract the arguments.
+        safe_tools = {
+            "list_characters",
+            "list_plot_threads",
+            "show_project_status",
+            "show_plot_state",
+        }
+        if match.tool_name not in safe_tools:
+            return None
+
+        result = self._execute_tool(match.tool_name, {})
+        result_str = json.dumps(result, ensure_ascii=False, indent=2)
+        response_text = f"[fast-route: {match.tool_name}]\n{result_str}"
+
+        self._append_message("assistant", response_text)
+        self._update_token_counts(
+            input_tokens=len(user_message) // 4,
+            output_tokens=len(response_text) // 4,
+        )
+        return response_text
 
     def _transition(self, new_state: SessionState):
         """Transition to a new state with validation."""
