@@ -8,19 +8,23 @@
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-  <img src="https://img.shields.io/badge/tests-38%20passing-brightgreen" alt="38 Tests">
+  <img src="https://img.shields.io/badge/tests-160%20passing-brightgreen" alt="160 Tests">
 </p>
 
 ---
 
 ## О проекте
 
-WriterAgent — CLI-инструмент для профессионального написания романов с интерактивным brainstorm, анализом стиля автора и глубокой памятью сюжета. Проектируется для novels до **600 000 слов**, с системой контекста, вписывающейся в окно контекста любой модели.
+WriterAgent — CLI-инструмент для профессионального написания романов с интерактивным агентом, анализом стиля автора, глубокой памятью сюжета и каскадной системой настроек. Проектируется для novels до **600 000 слов**, с системой контекста, вписывающейся в окно контекста любой модели.
 
 **Ключевые возможности:**
-- Интерактивный brainstorm-диалог с LLM для создания мира, персонажей и сюжета
+- Интерактивный **агент-писатель** — 13 инструментов для создания персонажей, глав, сюжетов, экспорта
+- **Token-based routing** — мгновенный запуск read-only команд без вызова LLM
+- **State machine** сессий — полный жизненный цикл: spawning → ready → running ⇄ waiting → paused → completed
+- **Session persistence** — автосохранение каждого сообщения в SQLite, автовосстановление при крашах
 - Автоматический анализ стиля автора из текстовых примеров
-- Генерация глав с контекстной памятью (персонажи, отношения, сюжетные нити, предыдущие главы)
+- Генерация с 8 типами сцен, иерархическими summary (3 уровня), plot state machine
+- Каскадная конфигурация: env > local TOML > global TOML > defaults
 - Проверка консистентности (мёртвые персонажи, разрешённые нити)
 - Экспорт в Markdown, TXT, DOCX
 - Работает полностью локально через LM Studio
@@ -30,32 +34,50 @@ WriterAgent — CLI-инструмент для профессиональног
 ## Архитектура
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    CLI (Typer + Rich)                 │
-│  new │ brainstorm │ write │ revise │ analyze │ export │
-└──────┬──────────┬──────────┬──────────┬──────────────┘
-       │          │          │          │
-       ▼          ▼          ▼          ▼
-┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
-│ Brain-   │ │ Chapter  │ │ Context  │ │ Exporter │
-│ storm    │ │ Generator│ │ Builder  │ │          │
-│ Engine   │ │          │ │          │ │          │
-└────┬─────┘ └────┬─────┘ └────┬─────┘ └──────────┘
-     │            │            │
-     ▼            ▼            ▼
-┌──────────────────────────────────────────────────────┐
-│                LM Studio Client                      │
-│           (OpenAI-compatible API)                    │
-└──────────────────────────────────────────────────────┘
-                     │
-                     ▼
-┌──────────────────────────────────────────────────────┐
-│                SQLite Database                       │
-│  projects │ characters │ chapters │ plot_threads     │
-│  relationships │ world_elements │ style_profiles     │
-│  brainstorm_sessions │ timeline_events               │
-└──────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                         CLI (Typer + Rich)                         │
+│  new │ chat │ write │ show │ revise │ brainstorm │ config │ export │
+└──┬───────┬─────────┬──────────┬──────────┬────────────────────────┘
+   │       │         │          │          │
+   ▼       ▼         ▼          ▼          ▼
+┌──────┐ ┌───────┐ ┌──────────┐ ┌──────┐ ┌──────────┐
+│Brain-│ │ Agent │ │ Chapter  │ │Con-  │ │ Exporter │
+│storm │ │Engine │ │ Generator│ │text  │ │          │
+│Engine│ │+13    │ │ +Scenes  │ │Check │ │          │
+│      │ │ tools │ │ +Style   │ │      │ │          │
+└──┬───┘ └──┬────┘ └───┬──────┘ └──────┘ └──────────┘
+   │        │          │
+   │  ┌─────┴──────┐   │
+   │  │ Intent     │   │
+   │  │ Router     │   │
+   │  │ (fast path)│   │
+   │  └────────────┘   │
+   │                   │
+   ▼                   ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                   LM Studio Client (OpenAI API)                  │
+└──────────────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     SQLite Database (11 tables)                  │
+│  projects │ characters │ chapters │ plot_threads │ relationships │
+│  world_elements │ style_profiles │ brainstorm_sessions           │
+│  timeline_events │ plot_states │ agent_sessions                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Milestones
+
+| Milestone | Описание | Статус |
+|-----------|----------|--------|
+| 1. Core Agent | Foundation, Style Analysis, Brainstorm, Generation, CLI, Consistency | ✅ |
+| 2. Settings System | Cascading TOML config, CLI config, auto-detect | ✅ |
+| 3. Generation Quality | Scene prompts, style injector, hierarchical summaries, plot state machine | ✅ |
+| 4. Interactive Agent | AgentEngine с 13 tools, embedded JSON tool calling | ✅ |
+| 5. Session & Routing | Session persistence, state machine, token-based routing | ✅ |
 
 ---
 
@@ -85,7 +107,9 @@ writer-agent version
 
 ## Конфигурация
 
-Все параметры настраиваются через переменные окружения:
+Каскадная система настроек: **env vars > local `writer.toml` > global `~/.writer-agent/config.toml` > defaults**.
+
+### Переменные окружения
 
 | Переменная | По умолчанию | Описание |
 |-----------|--------------|----------|
@@ -94,6 +118,24 @@ writer-agent version
 | `WRITER_MAX_CONTEXT_TOKENS` | `8192` | Максимальный размер контекста |
 | `WRITER_TEMPERATURE` | `0.8` | Температура генерации |
 | `WRITER_TOP_P` | `0.95` | Top-p сэмплирование |
+
+### CLI конфигурация
+
+```bash
+writer-agent config set generation.temperature 0.9
+writer-agent config set lmstudio.model_name "my-model"
+writer-agent config get generation.temperature
+```
+
+### 5 групп настроек
+
+| Группа | Настройки |
+|--------|-----------|
+| `lmstudio` | `url`, `model_name`, `api_key` |
+| `generation` | `temperature`, `top_p`, `max_tokens`, `target_words` |
+| `context` | `max_tokens`, `summary_levels` |
+| `model_overrides` | per-model параметры |
+| `paths` | `db_path`, `output_dir`, `examples_dir` |
 
 ---
 
@@ -115,12 +157,9 @@ writer-agent version
 writer-agent new "Тёмная страсть"
 ```
 
-**Параметры:**
-- `title` (обязательный) — название проекта/романа
-
 ### `writer-agent list`
 
-Показать список всех проектов в виде таблицы (Rich). Выводит ID, название, жанр, статус, дату создания.
+Показать список всех проектов в виде таблицы (Rich).
 
 ```bash
 writer-agent list
@@ -134,637 +173,169 @@ writer-agent list
 writer-agent status "Тёмная страсть"
 ```
 
-**Параметры:**
-- `title` (обязательный) — название проекта
+### `writer-agent chat <title>`
+
+Запустить **интерактивного агента** — LLM-оркестратор с 13 инструментами. Агент автоматически создаёт персонажей, пишет главы, показывает статус проекта, экспортирует роман — всё через диалог.
+
+```bash
+writer-agent chat "Тёмная страсть"
+```
+
+**Возможности агента (13 инструментов):**
+
+| Инструмент | Описание |
+|-----------|----------|
+| `create_character` | Создать персонажа (имя, описание, характер, предыстория, арка) |
+| `create_plot_thread` | Создать сюжетную нить (имя, описание, важность 1-10) |
+| `create_world_element` | Создать элемент мира (локация, артефакт, фракция, магия) |
+| `create_relationship` | Определить отношения между персонажами |
+| `list_characters` | Показать всех персонажей проекта |
+| `list_plot_threads` | Показать все сюжетные нити |
+| `show_chapter` | Показать содержание главы или список глав |
+| `show_project_status` | Обзор проекта: главы, слова, персонажи |
+| `show_plot_state` | Текущее состояние plot state machine |
+| `write_chapter` | Сгенерировать следующую главу |
+| `revise_chapter` | Переработать существующую главу |
+| `export_novel` | Экспорт в md/txt/docx |
+| `save_note` | Сохранить заметку или идею |
+
+**Встроенные команды агента:**
+
+| Команда | Описание |
+|---------|----------|
+| `/help` | Справка по командам |
+| `/session` | Статистика текущей сессии |
+| `/quit` | Выйти из агента |
+
+**Fast path:** запросы типа "покажи персонажей", "статус проекта" обрабатываются мгновенно через token-based routing, **без вызова LLM**.
+
+**Session persistence:** все сообщения автосохраняются в SQLite. При перезапуске агент автоматически продолжает прерванную сессию.
+
+**State machine:** сессия проходит через явные состояния с валидацией переходов — краш-безопасность и автовосстановление.
 
 ### `writer-agent brainstorm <title>`
 
-Запустить интерактивный brainstorm-режим. Многоходовый диалог с LLM для создания концепции романа, персонажей и сюжета.
+Запустить интерактивный brainstorm-режим.
 
 ```bash
 writer-agent brainstorm "Тёмная страсть"
 ```
 
-**Параметры:**
-- `title` (обязательный) — название проекта (существующего или нового)
-
 **Команды внутри brainstorm:**
 
 | Команда | Описание |
 |---------|----------|
-| `/help` | Показать справку по командам |
-| `/save char <name> <desc>` | Сохранить персонажа в базу |
+| `/help` | Справка |
+| `/save char <name> <desc>` | Сохранить персонажа |
 | `/save plot <name> <desc>` | Сохранить сюжетную нить |
 | `/save world <name> <desc>` | Сохранить элемент мира |
-| `/characters` | Показать сохранённых персонажей |
-| `/plots` | Показать сохранённые сюжетные нити |
-| `/done` | Завершить brainstorm, перевести проект в статус `outlined` |
-| `/quit` | Выйти из brainstorm без финализации |
-
-**Пример сессии:**
-```
-You> Хочу историю о вампире-мафиози, который влюбляется в следователя
-
-Agent> [Rich Markdown ответ с идеями]
-
-You> /save char Данте Мафия вампиров, 300 лет, холодный и расчётливый
-Saved character: Данте
-
-You> /save char Елена Следователь, охотится на мафию, не знает о вампирах
-Saved character: Елена
-
-You> /done
-Project finalized and ready for writing!
-```
+| `/characters` | Показать персонажей |
+| `/plots` | Показать сюжетные нити |
+| `/done` | Завершить brainstorm |
+| `/quit` | Выйти без финализации |
 
 ### `writer-agent write <title>`
 
-Сгенерировать следующую главу. Автоматически определяет номер следующей главы, собирает контекст из памяти, загружает профиль стиля и вызывает LLM.
+Сгенерировать следующую главу. Автоматически собирает контекст, классифицирует сцену, инжектирует стиль, отслеживает plot state.
 
 ```bash
 writer-agent write "Тёмная страсть"
+writer-agent write "Тёмная страсть" -o "Глава с погоней" -w 3000 -t 0.85
 ```
 
 **Параметры:**
-- `title` (обязательный) — название проекта
+- `--outline` / `-o` — план/набросок главы
+- `--words` / `-w` — целевое количество слов (по умолчанию 3000)
+- `--temp` / `-t` — температура (0.0-2.0, по умолчанию 0.85)
 
 **Что происходит внутри:**
-1. Определяется номер следующей главы (последняя + 1)
-2. `ContextBuilder` собирает контекст по приоритетам (см. ниже)
-3. Загружается профиль стиля из БД (если есть)
-4. LLM генерирует главу
-5. LLM создаёт сжатое summary главы
-6. Глава сохраняется в БД
+1. Определяется номер следующей главы
+2. `ContextBuilder` собирает контекст по приоритетам с иерархическими summary
+3. `SceneClassifier` определяет тип сцены (8 типов)
+4. `StyleInjector` конвертирует профиль стиля в инструкции
+5. `PromptAssembler` оркестрирует: scene + style + plot + context
+6. LLM генерирует главу
+7. Генерируются 3 уровня summary (arc 20w / compact 50w / detail 300w)
+8. Обновляется plot state machine
+9. Глава автосохраняется в файл
 
-### `writer-agent revise <title> <chapter> [instructions]`
+### `writer-agent show <title>`
 
-Переработать существующую главу по указаниям автора.
+Показать список глав или содержание конкретной главы.
 
 ```bash
-writer-agent revise "Тёмная страсть" 3 "Добавь больше диалогов, усиль напряжение"
+writer-agent show "Тёмная страсть"          # список глав
+writer-agent show "Тёмная страсть" -c 3     # показать главу 3
 ```
 
-**Параметры:**
-- `title` (обязательный) — название проекта
-- `chapter` (обязательный) — номер главы
-- `instructions` (опциональный) — инструкции для переработки (если не указаны, будет запрошен интерактивно)
+### `writer-agent revise <title>`
+
+Переработать существующую главу.
+
+```bash
+writer-agent revise "Тёмная страсть" --chapter 3 --instructions "Добавь диалоги"
+```
 
 ### `writer-agent analyze-style <directory>`
 
-Проанализировать стиль письма из текстовых примеров. Поддерживает txt, md, docx, pdf. Создаёт профиль стиля в БД, который автоматически используется при генерации.
+Проанализировать стиль письма из текстовых примеров (txt, md, docx, pdf).
 
 ```bash
 writer-agent analyze-style ./my_examples/
 ```
 
-**Параметры:**
-- `directory` (обязательный) — путь к директории с текстовыми примерами
+**Метрики:** средняя длина предложения, доля диалогов, POV, частотные слова, типы предложений, характерные отрывки.
 
-**Метрики анализа:**
-- Средняя длина предложения
-- Доля диалогов в тексте
-- POV (первое/третье лицо)
-- Частотные слова (топ-30, без стоп-слов)
-- Характерные отрывки
-- Типы предложений (повествовательные, вопросительные, восклицательные)
+### `writer-agent export <title>`
 
-### `writer-agent export <title> [fmt]`
-
-Экспортировать роман в файл. Форматы: `md` (по умолчанию), `txt`, `docx`.
+Экспортировать роман в файл.
 
 ```bash
-writer-agent export "Тёмная страсть"          # Markdown
-writer-agent export "Тёмная страсть" --fmt txt # Plain text
-writer-agent export "Тёмная страсть" --fmt docx # Word
+writer-agent export "Тёмная страсть"               # Markdown
+writer-agent export "Тёмная страсть" --format txt   # Plain text
+writer-agent export "Тёмная страсть" --format docx  # Word
 ```
 
-**Параметры:**
-- `title` (обязательный) — название проекта
-- `fmt` (опциональный, по умолчанию `md`) — формат экспорта: `md`, `txt`, `docx`
+### `writer-agent config`
 
----
+Управление каскадной конфигурацией.
 
-## API — подробная документация модулей
-
-### `writer_agent.config` — Конфигурация
-
-```python
-from writer_agent.config import Config
-```
-
-#### `Config` (dataclass)
-
-Основной конфигурационный объект. Создаётся из дефолтных значений или переменных окружения.
-
-| Поле | Тип | По умолчанию | Описание |
-|------|-----|-------------|----------|
-| `lm_studio_url` | `str` | `"http://localhost:1234/v1"` | URL LM Studio API |
-| `model_name` | `str` | `""` | Имя модели (пустое = автоопределение) |
-| `max_context_tokens` | `int` | `8192` | Максимальное количество токенов в контексте |
-| `temperature` | `float` | `0.8` | Температура генерации (0.1-2.0) |
-| `top_p` | `float` | `0.95` | Top-p nucleus sampling |
-| `db_path` | `Path` | `"data/writer_agent.db"` | Путь к базе данных |
-| `examples_dir` | `Path` | `"data/examples"` | Директория с примерами текстов |
-| `output_dir` | `Path` | `"data/novels"` | Директория для экспорта |
-
-#### `Config.from_env() -> Config`
-
-Создаёт конфигурацию из переменных окружения с fallback на дефолтные значения.
-
-```python
-config = Config.from_env()
-```
-
----
-
-### `writer_agent.db.database` — База данных
-
-```python
-from writer_agent.db.database import Database
-```
-
-#### `Database`
-
-SQLite-оболочка с инициализацией схемы из 9 таблиц.
-
-##### `Database(path: Path)`
-
-Создаёт подключение к базе. Директория создаётся автоматически.
-
-```python
-db = Database(Path("data/writer_agent.db"))
-```
-
-##### `Database.initialize()`
-
-Создаёт все таблицы, если они не существуют. Вызывать после конструктора.
-
-```python
-db.initialize()
-```
-
-##### `Database.execute(sql: str, params=()) -> cursor`
-
-Выполняет SQL-запрос. Возвращает cursor. Все строки возвращаются как `sqlite3.Row`.
-
-```python
-rows = db.execute("SELECT * FROM projects WHERE id = ?", (1,)).fetchall()
-```
-
-##### `Database.connection -> sqlite3.Connection`
-
-Доступ к raw-подключению для транзакций.
-
----
-
-### `writer_agent.db.repositories` — CRUD-репозитории
-
-9 репозиториев для работы с данными. Все методы возвращают `dict` (через `sqlite3.Row`).
-
-#### `ProjectRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(name: str, genre: str = "", description: str = "", tropes: list = None, target_words: int = 600000)` | `int` | Создать проект |
-| `get` | `get(project_id: int)` | `dict` | Получить по ID |
-| `get_by_name` | `get_by_name(name: str)` | `dict` | Найти по названию |
-| `list` | `list()` | `list[dict]` | Все проекты (по дате, DESC) |
-| `update_status` | `update_status(project_id: int, status: str)` | `None` | Обновить статус |
-
-**Статусы проекта:** `brainstorming` → `outlined` → `writing` → `complete`
-
-#### `CharacterRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, name: str, description: str = "", personality: str = "", full_name: str = "", background: str = "", arc: str = "", metadata: dict = None)` | `int` | Создать персонажа |
-| `get` | `get(char_id: int)` | `dict` | Получить по ID |
-| `list_by_project` | `list_by_project(project_id: int)` | `list[dict]` | Персонажи проекта |
-| `update` | `update(char_id: int, **kwargs)` | `None` | Обновить поля (name, status, description и т.д.) |
-| `get_relationships` | `get_relationships(char_id: int)` | `list[dict]` | Отношения персонажа |
-
-**Статусы персонажа:** `active`, `dead`, `absent`
-
-#### `ChapterRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, chapter_number: int, title: str = "", summary: str = "", full_text: str = "")` | `int` | Создать главу. Автоматически считает `word_count` |
-| `get` | `get(chapter_id: int)` | `dict` | Получить по ID |
-| `get_by_number` | `get_by_number(project_id: int, chapter_number: int)` | `dict` | Получить по номеру главы |
-| `list_by_project` | `list_by_project(project_id: int)` | `list[dict]` | Все главы проекта (по номеру) |
-| `get_latest` | `get_latest(project_id: int)` | `dict` | Последняя глава |
-| `update_text` | `update_text(chapter_id: int, full_text: str)` | `None` | Обновить текст и пересчитать `word_count` |
-
-#### `PlotThreadRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, name: str, description: str = "", status: str = "active", importance: int = 5)` | `int` | Создать сюжетную нить |
-| `get` | `get(thread_id: int)` | `dict` | Получить по ID |
-| `list_by_project` | `list_by_project(project_id: int, status: str = None)` | `list[dict]` | Нити проекта. Фильтр по `status` опционален. Сортировка по `importance` DESC |
-| `resolve` | `resolve(thread_id: int, resolved_chapter: int = None)` | `None` | Пометить как разрешённую |
-
-#### `RelationshipRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, char_a: str, char_b: str, type: str = "", description: str = "", evolution: str = "")` | `int` | Создать отношение между персонажами |
-| `get` | `get(rel_id: int)` | `dict` | Получить по ID |
-| `list_by_project` | `list_by_project(project_id: int)` | `list[dict]` | Отношения проекта |
-
-#### `WorldElementRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, name: str, category: str = "", description: str = "", metadata: dict = None)` | `int` | Создать элемент мира |
-| `get` | `get(elem_id: int)` | `dict` | Получить по ID |
-| `list_by_project` | `list_by_project(project_id: int)` | `list[dict]` | Элементы мира проекта (по category, name) |
-
-#### `StyleProfileRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(name: str, source_files: list = None, analysis: dict = None, sample_passages: list = None)` | `int` | Сохранить профиль стиля |
-| `get` | `get(profile_id: int)` | `dict` | Получить по ID |
-| `list` | `list()` | `list[dict]` | Все профили (по дате, DESC) |
-
-#### `BrainstormSessionRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, notes: str = "")` | `int` | Создать сессию brainstorm |
-| `get` | `get(session_id: int)` | `dict` | Получить сессию |
-| `add_message` | `add_message(session_id: int, role: str, content: str)` | `None` | Добавить сообщение (role: "user" / "assistant") |
-| `get_messages` | `get_messages(session_id: int)` | `list[dict]` | Все сообщения сессии |
-
-#### `TimelineEventRepo`
-
-| Метод | Сигнатура | Возвращает | Описание |
-|-------|-----------|------------|----------|
-| `create` | `create(project_id: int, description: str = "", chapter_id: int = None, event_order: int = 0, characters_involved: list = None, plot_threads: list = None)` | `int` | Создать событие таймлайна |
-| `get_by_chapter` | `get_by_chapter(chapter_id: int)` | `list[dict]` | События главы |
-| `get_by_project` | `get_by_project(project_id: int)` | `list[dict]` | Все события проекта |
-
----
-
-### `writer_agent.llm.client` — LLM-клиент
-
-```python
-from writer_agent.llm.client import LLMClient
-from writer_agent.config import Config
-```
-
-#### `LLMClient`
-
-OpenAI-совместимый клиент для LM Studio.
-
-##### `LLMClient(config: Config)`
-
-Создаёт клиент. Подключение к LM Studio через OpenAI SDK.
-
-```python
-client = LLMClient(Config())
-```
-
-##### `get_available_model() -> str`
-
-Возвращает имя модели. Если `config.model_name` пустое, автоматически определяет первую доступную модель через `/v1/models`.
-
-```python
-model = client.get_available_model()  # "qwen2.5-7b-instruct-q4_k_m"
-```
-
-##### `generate(system_prompt: str, user_prompt: str, context_blocks: list[str] | None = None, max_tokens: int = 4000, temperature: float | None = None) -> str`
-
-Генерация текста. `context_blocks` инъектируются как pseudo-turn между system и user сообщениями (system → [context] → assistant: "Context received" → user). Это даёт модели «память» без раздувания system prompt.
-
-```python
-text = client.generate(
-    system_prompt="Ты писатель.",
-    user_prompt="Напиши первую главу.",
-    context_blocks=["Персонаж: Елена — следователь", "Предыдущая глава: Они встретились."],
-    max_tokens=4000,
-)
-```
-
-##### `chat(messages: list[dict], max_tokens: int = 4000) -> str`
-
-Прямой multi-turn чат для brainstorm-режима. Принимает полный список сообщений.
-
-```python
-response = client.chat(
-    messages=[
-        {"role": "system", "content": "..."},
-        {"role": "user", "content": "Предложи идею"},
-        {"role": "assistant", "content": "..."},
-        {"role": "user", "content": "Развей идею"},
-    ],
-    max_tokens=2000,
-)
-```
-
-##### `count_tokens(text: str) -> int`
-
-Грубая оценка токенов: ~2 символа на токен для кириллицы, ~4 для латиницы.
-
-```python
-tokens = client.count_tokens("Длинный текст на русском.")  # ~11
-```
-
----
-
-### `writer_agent.llm.prompts` — Системные промпты
-
-```python
-from writer_agent.llm.prompts import SYSTEM_WRITER, SYSTEM_BRAINSTORM
-```
-
-| Константа | Описание |
-|-----------|----------|
-| `SYSTEM_WRITER` | Промпт для генерации глав. Профессиональный дарк-романтик novelist, Russian |
-| `SYSTEM_BRAINSTORM` | Промпт для brainstorm. Креативный консультант, tropes, subversion |
-
----
-
-### `writer_agent.analysis.parser` — Парсеры документов
-
-```python
-from writer_agent.analysis.parser import parse_document, parse_directory
-```
-
-#### `parse_document(path: Path) -> str`
-
-Парсит документ в plain text. Поддерживаемые форматы: `.txt`, `.md`, `.docx`, `.pdf`. Выбрасывает `ValueError` для неподдерживаемых форматов.
-
-```python
-text = parse_document(Path("draft.docx"))
-```
-
-#### `parse_directory(dir_path: Path) -> dict[str, str]`
-
-Парсит все поддерживаемые документы в директории. Возвращает `{filename: text}`. Пропускает файлы с ошибками парсинга.
-
-```python
-docs = parse_directory(Path("./examples/"))
-# {"chapter1.txt": "...", "chapter2.docx": "..."}
-```
-
----
-
-### `writer_agent.analysis.style` — Анализатор стиля
-
-```python
-from writer_agent.analysis.style import StyleAnalyzer
-```
-
-#### `StyleAnalyzer`
-
-Извлекает 8 стилистических метрик из текста.
-
-##### `analyze(text: str) -> dict`
-
-Полный анализ текста. Возвращает словарь:
-
-| Ключ | Тип | Описание |
-|------|-----|----------|
-| `avg_sentence_length` | `float` | Средняя длина предложения в словах |
-| `total_words` | `int` | Общее количество слов |
-| `frequent_words` | `list[str]` | Топ-30 частых слов (без русских стоп-слов, >2 символов) |
-| `sentence_patterns` | `dict` | `{questions_ratio, exclamations_ratio, statements_ratio}` |
-| `paragraph_lengths` | `list[int]` | Длины параграфов в словах |
-| `dialogue_ratio` | `float` | Доля текста в диалогах (em-dash, guillemets, кавычки) |
-| `sample_passages` | `list[str]` | 5 самых длинных параграфов |
-| `pov_style` | `str` | `"first_person"` или `"third_person"` |
-
-```python
-analyzer = StyleAnalyzer()
-result = analyzer.analyze("Она вошла. Тёмные волосы. Он смотрел.")
-# result["total_words"] == 6
-# result["pov_style"] == "third_person"
-```
-
----
-
-### `writer_agent.engine.brainstorm` — Brainstorm Engine
-
-```python
-from writer_agent.engine.brainstorm import BrainstormEngine
-```
-
-#### `BrainstormEngine`
-
-Управляет brainstorm-сессиями: создаёт проекты, ведёт диалог, сохраняет идеи.
-
-##### `BrainstormEngine(db: Database, llm_client)`
-
-##### `start_session(title: str) -> int`
-
-Создаёт проект и brainstorm-сессию. Возвращает `session_id`.
-
-##### `chat(session_id: int, user_message: str) -> str`
-
-Отправляет сообщение и получает ответ LLM. Сохраняет ход диалога в БД. Системный промпт — `SYSTEM_BRAINSTORM`.
-
-##### `get_history(session_id: int) -> list[dict]`
-
-Возвращает полную историю сообщений сессии: `[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]`.
-
-##### `save_character(session_id: int, **kwargs) -> int`
-
-Сохраняет персонажа из brainstorm. kwargs: `name`, `description`, `personality`, `full_name`, `background`, `arc`.
-
-##### `save_plot_thread(session_id: int, **kwargs) -> int`
-
-Сохраняет сюжетную нить. kwargs: `name`, `description`, `status`, `importance`.
-
-##### `save_world_element(session_id: int, **kwargs) -> int`
-
-Сохраняет элемент мира. kwargs: `name`, `category`, `description`, `metadata`.
-
-##### `finalize_session(session_id: int) -> int`
-
-Переводит проект в статус `outlined`. Возвращает `project_id`.
-
----
-
-### `writer_agent.engine.context` — Контекст-билдер
-
-```python
-from writer_agent.engine.context import ContextBuilder
-```
-
-#### `ContextBuilder`
-
-Собирает релевантный контекст из БД для генерации главы. Приоритетная система с токен-бюджетом.
-
-##### `ContextBuilder(db: Database, max_tokens: int = 6000)`
-
-##### `build(project_id: int, current_chapter: int) -> dict`
-
-Собирает блоки контекста по приоритетам и обрезает по бюджету.
-
-**Возвращает:** `{"blocks": list[str], "total_tokens": int}`
-
-**Приоритеты контекста:**
-
-| Приоритет | Блок | Описание |
-|-----------|------|----------|
-| 1 | `overview` | Название, жанр, описание проекта |
-| 2 | `characters` | Все персонажи проекта |
-| 3 | `chapter_history` / `prev_summary` | При `current_chapter > 5`: сжатые summary последних 5 глав. Иначе: summary предыдущей главы |
-| 4 | `plot_threads` | Активные сюжетные нити |
-| 5 | `world` | Элементы мира (до 10) |
-| 6 | `prev_passage` | Последние 1500 символов предыдущей главы |
-| 7 | `relationships` | Отношения между персонажами |
-
-Элементы с **низшим приоритетом отбрасываются первыми** при превышении бюджета.
-
-##### `_estimate_tokens(text: str) -> int`
-
-Оценка токенов: кириллица ~2 символа/токен, латиница ~4 символа/токен.
-
----
-
-### `writer_agent.engine.generator` — Генератор глав
-
-```python
-from writer_agent.engine.generator import ChapterGenerator
-```
-
-#### `ChapterGenerator`
-
-Оркестрирует генерацию глав: контекст + стиль + LLM + автосохранение.
-
-##### `ChapterGenerator(db: Database, llm_client, context_builder: ContextBuilder)`
-
-##### `generate_chapter(project_id: int, chapter_number: int, outline: str = "", target_words: int = 3000, style_instructions: str = "", temperature: float = 0.85) -> dict`
-
-Генерирует главу. Pipeline:
-
-1. Собирает контекст через `ContextBuilder`
-2. Загружает профиль стиля из БД (если `style_instructions` не указан)
-3. Формирует system prompt (SYSTEM_WRITER + стиль)
-4. Формирует user prompt (задание + план + объём)
-5. Вызывает LLM с context_blocks
-6. Генерирует summary через LLM (fallback на обрезку)
-7. Сохраняет главу в БД
-
-**Возвращает:**
-```python
-{
-    "chapter_id": int,
-    "full_text": str,
-    "word_count": int,
-}
-```
-
-##### `revise_chapter(chapter_id: int, instructions: str) -> dict`
-
-Перерабатывает существующую главу. Текущий текст главы + инструкции отправляются LLM. Обновляет текст в БД.
-
-**Возвращает:** `{"chapter_id": int, "full_text": str}`
-
-##### `_generate_summary(text: str) -> str`
-
-Генерирует summary с fallback: сначала пытается через LLM (2-3 предложения), при ошибке — обрезка первых 300 символов.
-
-##### `_load_style_prompt() -> str`
-
-Загружает последний профиль стиля из БД и конвертирует в текстовую инструкцию:
-
-```
-[Стиль автора]
-- Средняя длина предложения: 14 слов
-- POV: third_person
-- Доля диалогов: 35%
-- Частые слова: тьма, взгляд, кожа, шёпот, холод
-```
-
----
-
-### `writer_agent.engine.consistency` — Проверка консистентности
-
-```python
-from writer_agent.engine.consistency import ConsistencyChecker
-```
-
-#### `ConsistencyChecker`
-
-Проверяет план главы на соответствие текущему состоянию проекта.
-
-##### `ConsistencyChecker(db: Database)`
-
-##### `check(project_id: int, outline: str) -> list[str]`
-
-Возвращает список предупреждений (пустой = всё в порядке).
-
-**Проверки:**
-- Мёртвые персонажи (`status == "dead"`) не должны появляться как активные
-- Разрешённые сюжетные нити (`status == "resolved"`) не должны упоминаться как активные
-
-```python
-checker = ConsistencyChecker(db)
-warnings = checker.check(project_id=1, outline="Viktor enters the room.")
-# ["Персонаж 'Viktor' мёртв, но упомянут в плане как активный."]
-```
-
----
-
-### `writer_agent.export.exporter` — Экспорт
-
-```python
-from writer_agent.export.exporter import Exporter
-```
-
-#### `Exporter`
-
-##### `Exporter(chapter_repo: ChapterRepo)`
-
-##### `to_markdown(project_id: int, output_path: Path, title: str = "")`
-
-Экспорт в Markdown. Главы как `## Заголовок`, разделитель `---`.
-
-##### `to_txt(project_id: int, output_path: Path, title: str = "")`
-
-Экспорт в plain text. Заголовок с `=`, разделитель `-`.
-
-##### `to_docx(project_id: int, output_path: Path, title: str = "")`
-
-Экспорт в Word (.docx). Заголовок уровня 0, главы — уровень 1, параграфы через `\n\n`.
-
----
-
-## Схема базы данных
-
-**9 таблиц:**
-
-```
-projects              — Романы (name, genre, tropes JSON, status, target_words)
-  │
-  ├── characters      — Персонажи (name, description, personality, arc, status)
-  ├── chapters        — Главы (chapter_number, title, summary, full_text, word_count)
-  ├── plot_threads    — Сюжетные нити (name, status, importance, introduced/resolved)
-  ├── relationships   — Отношения (char_a, char_b, type, evolution)
-  ├── world_elements  — Элементы мира (category, name, description, metadata JSON)
-  ├── brainstorm_sessions — Brainstorm (messages JSON, notes)
-  └── timeline_events — Таймлайн (event_order, description, characters/threads JSON)
-
-style_profiles        — Профили стиля (независимые от проектов)
+```bash
+writer-agent config set generation.temperature 0.9
+writer-agent config get lmstudio.url
 ```
 
 ---
 
 ## Тестирование
 
+```
+160 tests passing, 0 failures, 14 test files
+```
+
+| Файл | Тестов | Что тестирует |
+|------|--------|---------------|
+| `test_session_persistence.py` | 34 | State machine (SessionState), AgentSessionRepo, AgentEngine lifecycle |
+| `test_generation_quality.py` | 32 | Scene prompts, style injector, hierarchical summaries, plot state, prompt assembler |
+| `test_intent_router.py` | 30 | Token-based routing, токенизация, best_match, все 13 tools |
+| `test_agent.py` | 21 | AgentEngine, tool registry, tool execution, chat loop, system prompt |
+| `test_config.py` | 7 | Cascading TOML settings, env vars, auto-detect |
+| `test_generator.py` | 6 | ChapterGenerator, LLM integration, summary generation, style loading |
+| `test_llm_client.py` | 4 | OpenAI-compatible API, auto-detect model |
+| `test_database.py` | 4 | SQLite schema, CRUD operations |
+| `test_parser.py` | 4 | txt/md/docx/pdf parsing |
+| `test_context.py` | 4 | ContextBuilder, token budgets, hierarchical summaries |
+| `test_cli.py` | 4 | CLI commands (version, new, list, analyze-style) |
+| `test_brainstorm.py` | 4 | BrainstormEngine, sessions, character save |
+| `test_style.py` | 3 | StyleAnalyzer metrics |
+| `test_consistency.py` | 3 | Dead character / resolved thread detection |
+
 ```bash
 # Запуск всех тестов
 pytest tests/ -v
 
 # Запуск конкретного модуля
-pytest tests/test_generator.py -v
-
-# С количеством тестов: 38
+pytest tests/test_agent.py -v
 ```
 
 ---
@@ -777,35 +348,71 @@ WriterAgent/
 ├── README.md
 ├── src/writer_agent/
 │   ├── __init__.py
-│   ├── cli.py                      # CLI-команды (Typer)
-│   ├── config.py                   # Конфигурация
+│   ├── cli.py                          # CLI-команды (Typer + Rich)
+│   ├── config.py                       # Базовая конфигурация
+│   ├── settings.py                     # Cascading TOML settings
 │   ├── db/
-│   │   ├── database.py             # SQLite-оболочка + схема
-│   │   └── repositories.py         # 9 CRUD-репозиториев
+│   │   ├── database.py                 # SQLite + schema (11 tables) + migration
+│   │   └── repositories.py             # CRUD-репозитории + AgentSessionRepo
 │   ├── llm/
-│   │   ├── client.py               # LM Studio клиент
-│   │   └── prompts.py              # Системные промпты
+│   │   ├── client.py                   # LM Studio клиент (OpenAI SDK)
+│   │   ├── prompts.py                  # Системные промпты (writer, brainstorm, agent)
+│   │   └── scene_prompts.py            # 8 типов сцен + explicit
 │   ├── analysis/
-│   │   ├── parser.py               # Парсеры txt/md/docx/pdf
-│   │   └── style.py                # Анализатор стиля
+│   │   ├── parser.py                   # Парсеры txt/md/docx/pdf
+│   │   ├── style.py                    # Анализатор стиля
+│   │   └── style_injector.py           # Конвертация метрик в инструкции
 │   ├── engine/
-│   │   ├── brainstorm.py           # Brainstorm engine
-│   │   ├── context.py              # Контекст-билдер
-│   │   ├── generator.py            # Генератор глав
-│   │   └── consistency.py          # Проверка консистентности
+│   │   ├── agent.py                    # AgentEngine — интерактивный агент
+│   │   ├── agent_tools.py              # 13 ToolDef + реализации
+│   │   ├── brainstorm.py               # Brainstorm engine
+│   │   ├── context.py                  # Контекст-билдер (приоритеты + бюджеты)
+│   │   ├── generator.py                # Генератор глав + 3-level summaries
+│   │   ├── consistency.py              # Проверка консистентности
+│   │   ├── intent_router.py            # Token-based intent routing
+│   │   ├── plot_state.py               # Plot state machine (JSON tracking)
+│   │   ├── prompt_assembler.py         # Оркестрация: scene + style + plot + context
+│   │   └── session_state.py            # SessionState enum + transition validation
 │   └── export/
-│       └── exporter.py             # Экспорт md/txt/docx
+│       └── exporter.py                 # Экспорт md/txt/docx
 └── tests/
-    ├── test_config.py
-    ├── test_database.py
-    ├── test_llm_client.py
-    ├── test_parser.py
-    ├── test_style.py
-    ├── test_brainstorm.py
-    ├── test_context.py
-    ├── test_generator.py
-    ├── test_consistency.py
-    └── test_cli.py
+    ├── test_agent.py                   # 21 test
+    ├── test_brainstorm.py              # 4 tests
+    ├── test_cli.py                     # 4 tests
+    ├── test_config.py                  # 7 tests
+    ├── test_consistency.py             # 3 tests
+    ├── test_context.py                 # 4 tests
+    ├── test_database.py                # 4 tests
+    ├── test_generation_quality.py      # 32 tests
+    ├── test_generator.py               # 6 tests
+    ├── test_intent_router.py           # 30 tests
+    ├── test_llm_client.py              # 4 tests
+    ├── test_parser.py                  # 4 tests
+    ├── test_session_persistence.py     # 34 tests
+    └── test_style.py                   # 3 tests
+```
+
+---
+
+## Схема базы данных
+
+**11 таблиц:**
+
+```
+projects              — Романы (name, genre, tropes JSON, status, target_words)
+  │
+  ├── characters      — Персонажи (name, description, personality, arc, status)
+  ├── chapters        — Главы (chapter_number, title, summary, full_text, word_count,
+  │                              compact_summary, arc_summary)
+  ├── plot_threads    — Сюжетные нити (name, status, importance, introduced/resolved)
+  ├── relationships   — Отношения (char_a, char_b, type, evolution)
+  ├── world_elements  — Элементы мира (category, name, description, metadata JSON)
+  ├── timeline_events — Таймлайн (event_order, description, characters/threads JSON)
+  └── plot_states     — Plot state machine (chapter_number, state JSON, version)
+
+style_profiles        — Профили стиля (независимые от проектов)
+brainstorm_sessions   — Brainstorm (messages JSON, notes)
+agent_sessions        — Агент-сессии (messages JSON, status, input/output tokens)
 ```
 
 ---
@@ -816,10 +423,35 @@ WriterAgent/
 1. writer-agent analyze-style ./examples/    → Анализ стиля автора
 2. writer-agent new "Мой роман"              → Создание проекта
 3. writer-agent brainstorm "Мой роман"       → Brainstorm (персонажи, сюжет, мир)
-4. writer-agent write "Мой роман"            → Генерация глав (повторять)
-5. writer-agent revise "Мой роман" 3 "..."   → Переработка глав
-6. writer-agent export "Мой роман" --fmt docx → Экспорт
+4. writer-agent chat "Мой роман"             → Интерактивный агент (создание + написание)
+5. writer-agent write "Мой роман" -w 3000    → Генерация глав (повторять)
+6. writer-agent revise "Мой роман" -c 3 ...  → Переработка глав
+7. writer-agent export "Мой роман" -f docx   → Экспорт
 ```
+
+---
+
+## Git Commits
+
+| # | Hash | Описание |
+|---|------|----------|
+| 1 | `6466bd7` | feat: project skeleton, config module, and database layer |
+| 2 | `8669a82` | chore: remove cached files from tracking |
+| 3 | `b9a1139` | feat: LM Studio client and document parsers |
+| 4 | `c66a710` | feat: style analyzer for vocabulary, patterns, POV detection |
+| 5 | `95d17ee` | feat: engine layer, full CLI, consistency checker, style integration |
+| 6 | `7245c80` | docs: comprehensive README with API reference |
+| 7 | `673c384` | docs: settings system design |
+| 8 | `2d80bb3` | feat: cascading settings system with TOML, CLI config, auto-detect |
+| 9 | `5087746` | docs: generation quality design |
+| 10 | `eed4630` | feat: generation quality — scene prompts, style injector, summaries, plot state |
+| 11 | `f07866f` | feat: uncensored prompt system — explicit writing instructions |
+| 12 | `f6d8118` | feat: add --outline, --words, --temp options to write command |
+| 13 | `bff5969` | feat: add show command + auto-save chapter to file after write |
+| 14 | `1399c47` | feat: interactive agent mode — Milestone 4 |
+| 15 | `1cf7c04` | feat: session persistence — auto-save/restore agent conversations to SQLite |
+| 16 | `2bade80` | feat: state machine sessions — explicit lifecycle for agent conversations |
+| 17 | `be26337` | feat: token-based intent routing — fast tool matching without LLM call |
 
 ---
 
