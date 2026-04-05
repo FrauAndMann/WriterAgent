@@ -367,14 +367,14 @@ class PlotStateRepo:
 
 
 class AgentSessionRepo:
-    """CRUD for agent_sessions — persistent conversation history."""
+    """CRUD for agent_sessions — persistent conversation history with state machine."""
 
     def __init__(self, db: Database):
         self.db = db
 
     def create(self, project_id: int) -> int:
         cur = self.db.execute(
-            "INSERT INTO agent_sessions (project_id) VALUES (?)",
+            "INSERT INTO agent_sessions (project_id, status) VALUES (?, 'spawning')",
             (project_id,),
         )
         self.db.connection.commit()
@@ -387,12 +387,22 @@ class AgentSessionRepo:
         return _row_to_dict(row)
 
     def get_active(self, project_id: int) -> dict | None:
+        """Find the most recent resumable session (ready, waiting, or paused)."""
         row = self.db.execute(
-            "SELECT * FROM agent_sessions WHERE project_id = ? AND status = 'active' "
+            "SELECT * FROM agent_sessions WHERE project_id = ? "
+            "AND status IN ('ready', 'waiting', 'paused') "
             "ORDER BY updated_at DESC, id DESC LIMIT 1",
             (project_id,),
         ).fetchone()
         return _row_to_dict(row)
+
+    def set_state(self, session_id: int, state: str):
+        """Update session status to a new state machine state."""
+        self.db.execute(
+            "UPDATE agent_sessions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (state, session_id),
+        )
+        self.db.connection.commit()
 
     def add_message(self, session_id: int, role: str, content: str):
         session = self.get(session_id)
@@ -414,18 +424,10 @@ class AgentSessionRepo:
         self.db.connection.commit()
 
     def pause(self, session_id: int):
-        self.db.execute(
-            "UPDATE agent_sessions SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (session_id,),
-        )
-        self.db.connection.commit()
+        self.set_state(session_id, "paused")
 
     def complete(self, session_id: int):
-        self.db.execute(
-            "UPDATE agent_sessions SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (session_id,),
-        )
-        self.db.connection.commit()
+        self.set_state(session_id, "completed")
 
     def get_messages(self, session_id: int) -> list[dict]:
         session = self.get(session_id)

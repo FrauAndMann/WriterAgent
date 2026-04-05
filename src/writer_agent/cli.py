@@ -357,6 +357,12 @@ def chat(
     engine = AgentEngine(db=db, llm_client=llm, project_id=project["id"], session_id=session_id)
 
     console.print(f"\n[bold magenta]Agent-Writer[/bold magenta] — {title}")
+    state_colors = {
+        "spawning": "dim", "ready": "green", "running": "yellow",
+        "waiting": "cyan", "paused": "blue", "completed": "dim",
+    }
+    sc = state_colors.get(engine.state.value, "white")
+    console.print(f"[{sc}]Состояние: {engine.state.value}[/{sc}]")
     console.print("[dim]Пиши что хочешь. /help — команды, /quit — выход[/dim]\n")
 
     while True:
@@ -407,12 +413,16 @@ def chat(
             continue
         if user_input == "/session":
             stats = engine.get_session_stats()
-            console.print(f"\n[bold]Сессия #{engine.session_id}[/bold]")
+            state_colors = {
+                "spawning": "dim", "ready": "green", "running": "yellow",
+                "waiting": "cyan", "paused": "blue", "completed": "dim",
+            }
+            sc = state_colors.get(engine.state.value, "white")
+            console.print(f"\n[bold]Сессия #{engine.session_id}[/bold]  [{sc}]{engine.state.value}[/{sc}]")
             console.print(f"  Сообщений: {stats['messages']} | "
-                         f"Входящих токенов: ~{stats['input_tokens']} | "
+                         f"Входящих: ~{stats['input_tokens']} | "
                          f"Исходящих: ~{stats['output_tokens']}")
-            console.print(f"  Статус: {stats.get('status', 'active')} | "
-                         f"Создана: {stats.get('created_at', '?')}")
+            console.print(f"  Создана: {stats.get('created_at', '?')}")
             console.print()
             continue
         if user_input == "/characters":
