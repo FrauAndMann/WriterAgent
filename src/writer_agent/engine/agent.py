@@ -6,6 +6,7 @@ import json
 import re
 
 from writer_agent.db.database import Database
+from writer_agent.db.repositories import AgentSessionRepo
 from writer_agent.engine.agent_tools import ToolDef, build_tool_registry
 from writer_agent.llm.prompts import build_system_agent
 
@@ -15,12 +16,22 @@ class AgentEngine:
 
     MAX_HISTORY = 20
 
-    def __init__(self, db: Database, llm_client, project_id: int):
+    def __init__(self, db: Database, llm_client, project_id: int, session_id: int | None = None):
         self.db = db
         self.llm = llm_client
         self.project_id = project_id
         self.tools = build_tool_registry()
-        self.history: list[dict] = []  # conversation messages
+        self.session_repo = AgentSessionRepo(db)
+        self.session_id: int | None = None
+        self.history: list[dict] = []
+
+        if session_id:
+            # Restore existing session
+            self.session_id = session_id
+            self.history = self.session_repo.get_messages(session_id)
+        else:
+            # Create new session
+            self.session_id = self.session_repo.create(project_id)
 
     def chat(self, user_message: str) -> str:
         """Process a user message through the agent loop.
@@ -28,7 +39,7 @@ class AgentEngine:
         Returns the final text response (with tool results already executed).
         """
         # Add user message to history
-        self.history.append({"role": "user", "content": user_message})
+        self._append_message("user", user_message)
 
         # Trim history
         self._trim_history()
@@ -43,8 +54,13 @@ class AgentEngine:
 
             # Call LLM
             response = self.llm.chat(messages=messages, max_tokens=4000)
-            self.history.append({"role": "assistant", "content": response})
-            self._trim_history()
+            self._append_message("assistant", response)
+
+            # Track tokens (rough estimate: 1 token ≈ 4 chars)
+            self._update_token_counts(
+                input_tokens=len(user_message) // 4,
+                output_tokens=len(response) // 4,
+            )
 
             # Parse tool calls
             tool_calls = self._parse_tool_calls(response)
@@ -63,7 +79,7 @@ class AgentEngine:
                 results_text += f"\n```result\n{result_str}\n```\n"
 
             # Feed results back as user message
-            self.history.append({"role": "user", "content": results_text})
+            self._append_message("user", results_text)
 
             # Trim history if too long
             self._trim_history()
@@ -79,9 +95,46 @@ class AgentEngine:
 
         return final_text.strip()
 
+    def pause_session(self):
+        """Mark current session as paused."""
+        if self.session_id:
+            self.session_repo.pause(self.session_id)
+
+    def complete_session(self):
+        """Mark current session as completed."""
+        if self.session_id:
+            self.session_repo.complete(self.session_id)
+
+    def get_session_stats(self) -> dict:
+        """Return session metadata."""
+        if not self.session_id:
+            return {"messages": 0, "input_tokens": 0, "output_tokens": 0}
+        session = self.session_repo.get(self.session_id)
+        if not session:
+            return {"messages": 0, "input_tokens": 0, "output_tokens": 0}
+        messages = json.loads(session["messages"])
+        return {
+            "messages": len(messages),
+            "input_tokens": session["input_tokens"],
+            "output_tokens": session["output_tokens"],
+            "status": session["status"],
+            "created_at": session["created_at"],
+        }
+
     def get_tools_prompt(self) -> str:
         """Build the tools description for the system prompt."""
         return "\n\n".join(t.to_prompt_text() for t in self.tools.values())
+
+    def _append_message(self, role: str, content: str):
+        """Add message to in-memory history and persist to DB."""
+        self.history.append({"role": role, "content": content})
+        if self.session_id:
+            self.session_repo.add_message(self.session_id, role, content)
+
+    def _update_token_counts(self, input_tokens: int = 0, output_tokens: int = 0):
+        """Accumulate token usage for the session."""
+        if self.session_id:
+            self.session_repo.update_tokens(self.session_id, input_tokens, output_tokens)
 
     def _build_messages(self) -> list[dict]:
         """Build the full message list for the LLM."""

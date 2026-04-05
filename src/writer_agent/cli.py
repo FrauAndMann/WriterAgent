@@ -324,13 +324,14 @@ def show(title: str, chapter: int = typer.Option(None, "--chapter", "-c", help="
 def chat(
     title: str,
     temperature: float = typer.Option(0.85, "--temp", "-t", help="Agent temperature"),
+    new_session: bool = typer.Option(False, "--new", "-n", help="Start new session instead of resuming"),
 ):
     """Interactive agent mode — write your novel through conversation."""
     db = _get_db()
     from writer_agent.settings import Settings
     from writer_agent.llm.client import LLMClient
     from writer_agent.engine.agent import AgentEngine
-    from writer_agent.db.repositories import ProjectRepo
+    from writer_agent.db.repositories import ProjectRepo, AgentSessionRepo
 
     config = Settings.load()
     llm = LLMClient(config)
@@ -343,7 +344,17 @@ def chat(
     # Apply temperature override
     config.generation.temperature = temperature
 
-    engine = AgentEngine(db=db, llm_client=llm, project_id=project["id"])
+    # Resume or create session
+    session_repo = AgentSessionRepo(db)
+    session_id = None
+    if not new_session:
+        active = session_repo.get_active(project["id"])
+        if active:
+            session_id = active["id"]
+            msg_count = len(__import__("json").loads(active["messages"]))
+            console.print(f"[dim]Продолжаю сессию #{session_id} ({msg_count} сообщений)[/dim]")
+
+    engine = AgentEngine(db=db, llm_client=llm, project_id=project["id"], session_id=session_id)
 
     console.print(f"\n[bold magenta]Agent-Writer[/bold magenta] — {title}")
     console.print("[dim]Пиши что хочешь. /help — команды, /quit — выход[/dim]\n")
@@ -352,7 +363,8 @@ def chat(
         try:
             user_input = console.input("[bold cyan]Ты>[/bold cyan] ").strip()
         except (EOFError, KeyboardInterrupt):
-            console.print("\n[dim]Пока![/dim]")
+            engine.pause_session()
+            console.print("\n[dim]Сессия сохранена. До встречи![/dim]")
             break
 
         if not user_input:
@@ -360,16 +372,20 @@ def chat(
 
         # Slash commands
         if user_input == "/quit":
-            console.print("[dim]Сессия завершена. Все данные сохранены в БД.[/dim]")
+            engine.pause_session()
+            stats = engine.get_session_stats()
+            console.print(f"[dim]Сессия сохранена. Сообщений: {stats['messages']}, "
+                         f"токенов: ~{stats['input_tokens'] + stats['output_tokens']}[/dim]")
             break
         if user_input == "/help":
             console.print(Panel(
                 "[bold]Команды:[/bold]\n"
                 "/help — эта справка\n"
                 "/status — статус проекта\n"
+                "/session — инфо о сессии\n"
                 "/characters — список персонажей\n"
                 "/chapters — список глав\n"
-                "/quit — выход\n\n"
+                "/quit — выход (сессия сохраняется)\n\n"
                 "[bold]Или пиши на естественном языке:[/bold]\n"
                 "«составь концепцию романа про вампиров»\n"
                 "«создай персонажа Елена — тёмная следователь»\n"
@@ -387,6 +403,16 @@ def chat(
             total_words = sum(ch.get("word_count", 0) for ch in chapters)
             console.print(f"\n[bold]{title}[/bold]")
             console.print(f"  Главы: {len(chapters)} | Слова: {total_words:,} | Персонажи: {len(chars)} | Сюжетные нити: {len(threads)}")
+            console.print()
+            continue
+        if user_input == "/session":
+            stats = engine.get_session_stats()
+            console.print(f"\n[bold]Сессия #{engine.session_id}[/bold]")
+            console.print(f"  Сообщений: {stats['messages']} | "
+                         f"Входящих токенов: ~{stats['input_tokens']} | "
+                         f"Исходящих: ~{stats['output_tokens']}")
+            console.print(f"  Статус: {stats.get('status', 'active')} | "
+                         f"Создана: {stats.get('created_at', '?')}")
             console.print()
             continue
         if user_input == "/characters":

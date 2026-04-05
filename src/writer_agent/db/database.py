@@ -122,6 +122,18 @@ CREATE TABLE IF NOT EXISTS timeline_events (
     FOREIGN KEY (chapter_id) REFERENCES chapters(id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    messages TEXT DEFAULT '[]',
+    status TEXT DEFAULT 'active',
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_characters_project ON characters(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_project ON chapters(project_id);
 CREATE INDEX IF NOT EXISTS idx_chapters_number ON chapters(project_id, chapter_number);
@@ -132,6 +144,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project ON brainstorm_sessions(project_i
 CREATE INDEX IF NOT EXISTS idx_timeline_project ON timeline_events(project_id);
 CREATE INDEX IF NOT EXISTS idx_timeline_chapter ON timeline_events(chapter_id);
 CREATE INDEX IF NOT EXISTS idx_plot_states_project ON plot_states(project_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_project ON agent_sessions(project_id);
 """
 
 # Migration statements for existing databases
@@ -144,6 +157,17 @@ MIGRATIONS = [
         chapter_number INTEGER NOT NULL,
         state TEXT NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (project_id) REFERENCES projects(id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS agent_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL,
+        messages TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'active',
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (project_id) REFERENCES projects(id)
     )""",
 ]

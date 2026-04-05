@@ -364,3 +364,76 @@ class PlotStateRepo:
             (project_id,),
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
+
+
+class AgentSessionRepo:
+    """CRUD for agent_sessions — persistent conversation history."""
+
+    def __init__(self, db: Database):
+        self.db = db
+
+    def create(self, project_id: int) -> int:
+        cur = self.db.execute(
+            "INSERT INTO agent_sessions (project_id) VALUES (?)",
+            (project_id,),
+        )
+        self.db.connection.commit()
+        return cur.lastrowid
+
+    def get(self, session_id: int) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM agent_sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def get_active(self, project_id: int) -> dict | None:
+        row = self.db.execute(
+            "SELECT * FROM agent_sessions WHERE project_id = ? AND status = 'active' "
+            "ORDER BY updated_at DESC, id DESC LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        return _row_to_dict(row)
+
+    def add_message(self, session_id: int, role: str, content: str):
+        session = self.get(session_id)
+        messages = json.loads(session["messages"])
+        messages.append({"role": role, "content": content})
+        self.db.execute(
+            "UPDATE agent_sessions SET messages = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(messages, ensure_ascii=False), session_id),
+        )
+        self.db.connection.commit()
+
+    def update_tokens(self, session_id: int, input_tokens: int = 0, output_tokens: int = 0):
+        session = self.get(session_id)
+        self.db.execute(
+            "UPDATE agent_sessions SET input_tokens = ?, output_tokens = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (session["input_tokens"] + input_tokens, session["output_tokens"] + output_tokens, session_id),
+        )
+        self.db.connection.commit()
+
+    def pause(self, session_id: int):
+        self.db.execute(
+            "UPDATE agent_sessions SET status = 'paused', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (session_id,),
+        )
+        self.db.connection.commit()
+
+    def complete(self, session_id: int):
+        self.db.execute(
+            "UPDATE agent_sessions SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (session_id,),
+        )
+        self.db.connection.commit()
+
+    def get_messages(self, session_id: int) -> list[dict]:
+        session = self.get(session_id)
+        return json.loads(session["messages"])
+
+    def list_by_project(self, project_id: int) -> list[dict]:
+        rows = self.db.execute(
+            "SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY updated_at DESC",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_dict(r) for r in rows]
